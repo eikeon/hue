@@ -3,60 +3,39 @@ package hue
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
+	"fmt"
+	"io/ioutil"
 	"log"
 	"net/http"
 	"time"
 )
 
-type Hue struct {
-	Host        string
-	Key         string
-	Addresses   map[string]string
-	States      map[string]interface{}
-	Transitions map[string][]struct {
-		Light  string
-		State  string
-		Action string
-	}
-	Lights map[string]light
-	Groups map[string]group
-}
-
-type light struct {
-	Name  string
-	State lightStateGet
-}
-
-type group struct {
-	Name   string
-	Lights []string
-	Action lightStateGet
-}
-
-type lightStateCommon struct {
+type LightStateCommon struct {
 	On     bool
 	Bri    uint8
 	Alert  string
 	Effect string
 }
 
-type lightStateGet struct {
-	lightStateCommon
+type Light struct {
+	Name  string
+	State State
+}
+
+type State struct {
+	LightStateCommon
 
 	ColorMode string
-	Hue       uint16 //uint16w
+	Hue       uint16
 	Sat       uint8
 	Xy        [2]float32
 	Ct        uint16
 	Reachable bool
 }
 
-func (ls lightStateGet) HTMLColor() string {
-	return "blue"
-}
-
 type lightStatePut struct {
-	lightStateCommon
+	LightStateCommon
 
 	TransitionTime uint16
 }
@@ -64,7 +43,7 @@ type lightStatePut struct {
 type lightStatePutHS struct {
 	lightStatePut
 
-	Hue uint16 //uint16w
+	Hue uint16
 	Sat uint8
 }
 
@@ -80,11 +59,42 @@ type lightStatePutCT struct {
 	Ct uint16
 }
 
-type errorResponse struct {
-	Error struct {
-		Type        int
-		Address     string
-		Description string
+type Group struct {
+	Name   string
+	Lights []string
+	Action State
+}
+
+type Datastore struct {
+	Lights map[string]Light
+	Groups map[string]Group
+	//Config
+	//Schedules
+	//Scene
+}
+
+type Hue struct {
+	Host     string
+	Username string
+
+	// a copy of the hue datastore from the bridge
+	Datastore Datastore
+
+	// errors returned from the last call to the bridge
+	Errors []struct {
+		Error struct {
+			Type        int
+			Address     string
+			Description string
+		}
+	}
+
+	Addresses   map[string]string
+	States      map[string]interface{}
+	Transitions map[string][]struct {
+		Light  string
+		State  string
+		Action string
 	}
 }
 
@@ -95,7 +105,7 @@ type bridge struct {
 }
 type bridgeResponse []bridge
 
-func (h *Hue) getURL() string {
+func (h *Hue) getHost() (string, error) {
 	if h.Host == "" {
 		if response, err := http.Get("http://www.meethue.com/api/nupnp"); err == nil {
 			dec := json.NewDecoder(response.Body)
@@ -105,85 +115,117 @@ func (h *Hue) getURL() string {
 					b := br[0]
 					h.Host = b.Internalipaddress
 				} else {
-					log.Fatal("bridgeResponse != 1 not yet implemented")
+					return "", errors.New("bridgeResponse != 1 not yet implemented")
 				}
 			} else {
-				log.Fatal("could not decode bridgeResponse:", err)
+				return "", errors.New(fmt.Sprintf("could not decode bridgeResponse: %s", err))
 			}
 			response.Body.Close()
 		} else {
-			log.Fatal("could not get:", err)
+			return "", errors.New(fmt.Sprintf("could not get: %s", err))
 		}
 
 	}
-	if h.Key == "" {
-		// TODO: fix me
-		h.Key = "334b473e8c2555d5eb722e0c932df793"
-	}
-	return "http://" + h.Host + "/api/" + h.Key
+	return h.Host, nil
 }
 
-func (h *Hue) GetLights() {
-	if response, err := http.Get(h.getURL() + "/lights"); err == nil {
+func (h *Hue) CreateUser(username, devicetype string) error {
+	if b, err := json.Marshal(struct {
+		Devicetype string `json:"devicetype,omitempty"`
+		Username   string `json:"username,omitempty"`
+	}{"Marvin", username}); err == nil {
+		host, err := h.getHost()
+		if err != nil {
+			return err
+		}
+		if r, err := http.NewRequest("POST", "http://"+host+"/api", bytes.NewReader(b)); err == nil {
+			if response, err := http.DefaultClient.Do(r); err == nil {
+				if body, err := ioutil.ReadAll(response.Body); err == nil {
+					response.Body.Close()
+					// example: [{"success":{"username": "1234567890"}}]
+					var r []map[string]map[string]string
+					if err = json.Unmarshal(body, &r); err == nil {
+						if len(r) > 0 {
+							s, ok := r[0]["success"]
+							if ok {
+								h.Username = s["username"]
+								h.Errors = h.Errors[0:0]
+								return nil
+							}
+						}
+						// TODO: implement multiple bridge etc case
+						return errors.New("user not autherized?")
+					} else {
+						if err = json.Unmarshal(body, &(h.Errors)); err == nil {
+							// TODO: check error response
+							return errors.New("user not autherized")
+						} else {
+							log.Println("body:", string(body))
+							return errors.New("unexpected response")
+						}
+					}
+				} else {
+					return err
+				}
+			} else {
+				return err
+			}
+		} else {
+			return err
+		}
+	} else {
+		log.Fatal("ERROR: json.Marshal: " + err.Error())
+	}
+	return nil
+}
+
+func (h *Hue) GetState() error {
+	if h.Username == "" {
+		return errors.New("error: no user")
+	}
+	host, err := h.getHost()
+	if err != nil {
+		return err
+	}
+	u := "http://" + host + "/api/" + h.Username
+	if response, err := http.Get(u); err == nil {
+		body, err := ioutil.ReadAll(response.Body)
+		if err != nil {
+			return err
+		}
+		response.Body.Close()
+		h.Errors = h.Errors[0:0]
+		err = json.Unmarshal(body, &(h.Datastore))
+		if err != nil {
+			log.Println("WARNING: could not unmarshal datastore:", err)
+			err = json.Unmarshal(body, &(h.Errors))
+			if err != nil {
+				return err
+			} else {
+				if len(h.Errors) == 1 {
+					if h.Errors[0].Error.Type == 1 {
+						return errors.New(fmt.Sprintf("%v", h.Errors))
+					}
+				}
+			}
+		}
+	} else {
+		return err
+	}
+	// get group 0 which is not included in full datastore dump for some reason :(
+	if response, err := http.Get(u + "/groups/0"); err == nil {
 		dec := json.NewDecoder(response.Body)
-		if err = dec.Decode(&(h.Lights)); err != nil {
-			log.Fatal("could not decode lightsResponse:", err)
+		var l Group
+		if err = dec.Decode(&l); err == nil {
+			h.Datastore.Groups["0"] = l
+		} else {
+			log.Fatal("could not decode group:", err)
 		}
 		response.Body.Close()
 	} else {
-		log.Fatal("could not get lights:", err)
+		log.Fatal("could not get group:", err)
 	}
-}
-
-func (h *Hue) GetGroups() {
-	if response, err := http.Get(h.getURL() + "/groups"); err == nil {
-		dec := json.NewDecoder(response.Body)
-		if err = dec.Decode(&(h.Groups)); err != nil {
-			log.Fatal("could not decode groupsResponse:", err)
-		}
-		response.Body.Close()
-	} else {
-		log.Fatal("could not get groups:", err)
-	}
-}
-
-func (h *Hue) GetState() {
-	if h.Lights == nil {
-		h.GetLights()
-	}
-	for name, _ := range h.Lights {
-		if response, err := http.Get(h.getURL() + "/lights/" + name); err == nil {
-			dec := json.NewDecoder(response.Body)
-			var l light
-			if err = dec.Decode(&l); err == nil {
-				h.Lights[name] = l
-			} else {
-				log.Fatal("could not decode light:", err)
-			}
-			response.Body.Close()
-		} else {
-			log.Fatal("could not get light:", err)
-		}
-	}
-
-	if h.Groups == nil {
-		h.GetGroups()
-		h.Groups["0"] = group{}
-	}
-	for name, _ := range h.Groups {
-		if response, err := http.Get(h.getURL() + "/groups/" + name); err == nil {
-			dec := json.NewDecoder(response.Body)
-			var l group
-			if err = dec.Decode(&l); err == nil {
-				h.Groups[name] = l
-			} else {
-				log.Fatal("could not decode group:", err)
-			}
-			response.Body.Close()
-		} else {
-			log.Fatal("could not get group:", err)
-		}
-	}
+	return nil
 }
 
 func (h *Hue) Do(transition string) {
@@ -201,12 +243,19 @@ func (h *Hue) Do(transition string) {
 	}
 }
 
-func (h *Hue) Set(address string, value interface{}) {
-	url := "http://" + h.Host + "/api/" + h.Key + address
+func (h *Hue) Set(address string, value interface{}) error {
+	host, err := h.getHost()
+	if err != nil {
+		return err
+	}
+	if h.Username == "" {
+		return errors.New("error: no user")
+	}
+	url := "http://" + host + "/api/" + h.Username + address
 	b, err := json.Marshal(value)
 	if err != nil {
 		log.Println("ERROR: json.Marshal: " + err.Error())
-		return
+		return err
 	}
 	if r, err := http.NewRequest("PUT", url, bytes.NewReader(b)); err == nil {
 		if response, err := http.DefaultClient.Do(r); err == nil {
@@ -218,4 +267,5 @@ func (h *Hue) Set(address string, value interface{}) {
 	} else {
 		log.Println("ERROR: NewRequest: " + err.Error())
 	}
+	return nil
 }
