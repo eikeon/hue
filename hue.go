@@ -12,26 +12,26 @@ import (
 )
 
 type LightStateCommon struct {
-	On     bool
-	Bri    uint8
-	Alert  string
-	Effect string
+	On     bool   `json:"on"`
+	Bri    uint8  `json:"bri"`
+	Alert  string `json:"alert"`
+	Effect string `json:"effect"`
 }
 
 type Light struct {
-	Name  string
-	State State
+	Name  string `json:"name"`
+	State State  `json:"state"`
 }
 
 type State struct {
 	LightStateCommon
 
-	ColorMode string
-	Hue       uint16
-	Sat       uint8
-	Xy        [2]float32
-	Ct        uint16
-	Reachable bool
+	ColorMode string     `json:"colormode"`
+	Hue       uint16     `json:"hue"`
+	Sat       uint8      `json:"sat"`
+	Xy        [2]float32 `json:"xy"`
+	Ct        uint16     `json:"ct"`
+	Reachable bool       `json:"reachable"`
 }
 
 type lightStatePut struct {
@@ -60,14 +60,14 @@ type lightStatePutCT struct {
 }
 
 type Group struct {
-	Name   string
-	Lights []string
-	Action State
+	Name   string   `json:"name"`
+	Lights []string `json:"lights"`
+	Action State    `json:"action"`
 }
 
 type Datastore struct {
-	Lights map[string]Light
-	Groups map[string]Group
+	Lights map[string]Light `json:"lights"`
+	Groups map[string]Group `json:"groups"`
 	//Config
 	//Schedules
 	//Scene
