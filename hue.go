@@ -11,52 +11,22 @@ import (
 	"time"
 )
 
-type LightStateCommon struct {
-	On     bool   `json:"on"`
-	Bri    uint8  `json:"bri"`
-	Alert  string `json:"alert"`
-	Effect string `json:"effect"`
-}
-
 type Light struct {
 	Name  string `json:"name"`
 	State State  `json:"state"`
 }
 
 type State struct {
-	LightStateCommon
-
+	On        bool       `json:"on"`
+	Bri       uint8      `json:"bri"`
+	Alert     string     `json:"alert"`
+	Effect    string     `json:"effect"`
 	ColorMode string     `json:"colormode"`
 	Hue       uint16     `json:"hue"`
 	Sat       uint8      `json:"sat"`
 	Xy        [2]float32 `json:"xy"`
 	Ct        uint16     `json:"ct"`
 	Reachable bool       `json:"reachable"`
-}
-
-type lightStatePut struct {
-	LightStateCommon
-
-	TransitionTime uint16
-}
-
-type lightStatePutHS struct {
-	lightStatePut
-
-	Hue uint16
-	Sat uint8
-}
-
-type lightStatePutXY struct {
-	lightStatePut
-
-	Xy [2]float32
-}
-
-type lightStatePutCT struct {
-	lightStatePut
-
-	Ct uint16
 }
 
 type Group struct {
