@@ -58,14 +58,6 @@ type Hue struct {
 			Description string
 		}
 	}
-
-	Addresses   map[string]string
-	States      map[string]interface{}
-	Transitions map[string][]struct {
-		Light  string
-		State  string
-		Action string
-	}
 }
 
 type bridge struct {
@@ -196,21 +188,6 @@ func (h *Hue) GetState() error {
 		log.Fatal("could not get group:", err)
 	}
 	return nil
-}
-
-func (h *Hue) Do(transition string) {
-	for _, command := range h.Transitions[transition] {
-		address := h.Addresses[command.Light]
-		var name string
-		if command.State != "" {
-			name = command.State
-			address += "/state"
-		} else if command.Action != "" {
-			name = command.Action
-			address += "/action"
-		}
-		h.Set(address, h.States[name])
-	}
 }
 
 func (h *Hue) Set(address string, value interface{}) error {
